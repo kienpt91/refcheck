@@ -1,0 +1,47 @@
+{
+  "name": "refcheck",
+  "version": "0.1.0",
+  "description": "Local, deterministic verifier of code references (imports, exports, subpaths, call shapes) against what is actually installed in a JavaScript/TypeScript project.",
+  "keywords": [
+    "hallucination",
+    "coding-agents",
+    "imports",
+    "typescript",
+    "static-analysis",
+    "supply-chain",
+    "pre-commit"
+  ],
+  "license": "MIT",
+  "author": "Kien Phan",
+  "type": "module",
+  "bin": {
+    "refcheck": "dist/cli.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "bench": "npm run build && node bench/run.mjs"
+  },
+  "dependencies": {
+    "typescript": "^5.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "vitest": "^3.0.0"
+  }
+}
