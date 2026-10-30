@@ -1,0 +1,13 @@
+{
+  "name": "bench-project",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "dependencies": {
+    "@acme/utils": "^2.1.0",
+    "csv-lite": "^0.9.0",
+    "ghost-lib": "^1.0.0",
+    "state-kit": "^3.2.0",
+    "tiny-http": "^1.4.0"
+  }
+}
