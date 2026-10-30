@@ -36,6 +36,40 @@ function inNodeModules(file: string): boolean {
   return file.replaceAll("\\", "/").includes("/node_modules/");
 }
 
+/** A declaration from a typed (non-JS) file inside node_modules. */
+function isExternalDecl(decl: ts.Node | undefined): boolean {
+  if (!decl) return false;
+  const name = decl.getSourceFile().fileName;
+  return inNodeModules(name) && !JS_FILE.test(name);
+}
+
+function isFunctionLike(decl: ts.Declaration): boolean {
+  return ts.isFunctionDeclaration(decl) || ts.isMethodDeclaration(decl) || ts.isMethodSignature(decl) || ts.isConstructorDeclaration(decl);
+}
+
+interface ArgRange {
+  min: number;
+  max: number;
+}
+
+interface KeySet {
+  keys: Set<string>;
+  open: boolean;
+  sawObject: boolean;
+}
+
+function propertyName(prop: ts.ObjectLiteralElementLike): string | undefined {
+  if (ts.isSpreadAssignment(prop)) return undefined;
+  const name = prop.name;
+  if (name && (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name))) return name.text;
+  return undefined;
+}
+
+function describeRanges(ranges: ArgRange[]): string {
+  const parts = [...new Set(ranges.map((r) => (r.max === Infinity ? `${r.min}+` : r.min === r.max ? `${r.min}` : `${r.min}-${r.max}`)))];
+  return parts.join(" or ");
+}
+
 function compilerOptions(root: string): ts.CompilerOptions {
   const options: ts.CompilerOptions = {
     target: ts.ScriptTarget.ES2022,
@@ -281,6 +315,8 @@ class FileChecker {
     } else if (ts.isPropertyAccessExpression(node)) {
       this.checkNamespaceMember(node);
     }
+    if (ts.isCallExpression(node) || ts.isNewExpression(node)) this.checkCall(node);
+    else if (ts.isIdentifier(node)) this.checkDeprecated(node);
     ts.forEachChild(node, (child) => this.visit(child));
   }
 
@@ -477,6 +513,187 @@ class FileChecker {
       if (json) return json.type === "module";
       if (path.dirname(dir) === dir) return false;
     }
+  }
+
+  private rangeOf(sig: ts.Signature): ArgRange | undefined {
+    const decl = sig.declaration;
+    if (!decl || ts.isJSDocSignature(decl)) return undefined;
+    const params = decl.parameters.filter((p) => !(ts.isIdentifier(p.name) && p.name.text === "this"));
+    let min = 0;
+    let max = params.length;
+    params.forEach((p, i) => {
+      if (p.dotDotDotToken) max = Infinity;
+      else if (!p.questionToken && !p.initializer) min = i + 1;
+    });
+    while (min > 0) {
+      const p = params[min - 1]!;
+      if (!p.type) break;
+      const t = this.checker.getTypeFromTypeNode(p.type);
+      const acceptsVoid = t.flags & ts.TypeFlags.Void || (t.isUnion() && t.types.some((u) => u.flags & ts.TypeFlags.Void));
+      if (!acceptsVoid) break;
+      min--;
+    }
+    return { min, max };
+  }
+
+  private checkCall(node: ts.CallExpression | ts.NewExpression): void {
+    if (node.expression.kind === ts.SyntaxKind.ImportKeyword || node.expression.kind === ts.SyntaxKind.SuperKeyword) return;
+    const type = this.checker.getNonNullableType(this.checker.getTypeAtLocation(node.expression));
+    const sigs = ts.isNewExpression(node) ? type.getConstructSignatures() : type.getCallSignatures();
+    if (sigs.length === 0 || !sigs.every((s) => isExternalDecl(s.declaration))) return;
+    const args = node.arguments ? [...node.arguments] : [];
+    const pkg = packageNameFromPath(sigs[0]!.declaration!.getSourceFile().fileName);
+    const name = node.expression.getText(this.sf).replace(/\s+/g, " ").slice(0, 60);
+    const ranges = sigs.map((s) => this.rangeOf(s));
+    if (ranges.some((r) => r === undefined)) return;
+    const known = ranges as ArgRange[];
+    const spread = args.some((a) => ts.isSpreadElement(a));
+    const compatible = sigs.filter((_, i) => spread || (args.length >= known[i]!.min && args.length <= known[i]!.max));
+    if (!spread && compatible.length === 0) {
+      this.report(node, "bad-call-arity", `${name}() called with ${args.length} argument${args.length === 1 ? "" : "s"}, but it accepts ${describeRanges(known)}`, {
+        symbol: name,
+        ...(pkg ? { package: pkg } : {}),
+      });
+      return;
+    }
+    args.forEach((arg, index) => {
+      if (!ts.isObjectLiteralExpression(arg)) return;
+      const types: ts.Type[] = [];
+      for (const sig of compatible) {
+        const param = sig.getParameters()[index];
+        const decl = param?.valueDeclaration;
+        if (!param || (decl && ts.isParameter(decl) && decl.dotDotDotToken)) continue;
+        types.push(this.checker.getTypeOfSymbolAtLocation(param, arg));
+      }
+      if (types.length > 0) this.checkObjectLiteral(arg, types, `${name}()`, pkg, 0);
+    });
+  }
+
+  private collectKeys(type: ts.Type, acc: KeySet, depth: number): void {
+    if (depth > 6) {
+      acc.open = true;
+      return;
+    }
+    if (type.isUnion() || type.isIntersection()) {
+      for (const t of type.types) this.collectKeys(t, acc, depth + 1);
+      return;
+    }
+    const F = ts.TypeFlags;
+    if (type.flags & (F.Any | F.Unknown | F.TypeParameter | F.IndexedAccess | F.Conditional | F.Substitution | F.NonPrimitive)) {
+      acc.open = true;
+      return;
+    }
+    if (!(type.flags & F.Object)) return;
+    if (type.getCallSignatures().length > 0 || type.getConstructSignatures().length > 0) return;
+    const symbolName = type.symbol?.name;
+    if (symbolName === "Array" || symbolName === "ReadonlyArray") return;
+    if (symbolName === "Object" || this.checker.getIndexInfosOfType(type).length > 0) {
+      acc.open = true;
+      return;
+    }
+    const props = type.getProperties();
+    if (props.length === 0) {
+      acc.open = true;
+      return;
+    }
+    acc.sawObject = true;
+    for (const p of props) acc.keys.add(p.name);
+  }
+
+  private propertySymbols(type: ts.Type, name: string, out: ts.Symbol[]): void {
+    if (type.isUnion() || type.isIntersection()) {
+      for (const t of type.types) this.propertySymbols(t, name, out);
+      return;
+    }
+    const sym = type.getProperty(name);
+    if (sym) out.push(sym);
+  }
+
+  private checkObjectLiteral(lit: ts.ObjectLiteralExpression, types: ts.Type[], callName: string, pkg: string | undefined, depth: number): void {
+    const acc: KeySet = { keys: new Set(), open: false, sawObject: false };
+    for (const t of types) this.collectKeys(this.checker.getNonNullableType(t), acc, 0);
+    if (acc.open || !acc.sawObject) return;
+    for (const prop of lit.properties) {
+      const key = propertyName(prop);
+      if (key === undefined || !prop.name) continue;
+      if (!acc.keys.has(key)) {
+        const suggestion = closest(key, acc.keys);
+        const valid = [...acc.keys].sort();
+        const hint = suggestion ? `; did you mean "${suggestion}"?` : valid.length <= 12 ? ` (known keys: ${valid.join(", ")})` : "";
+        this.report(prop.name, "unknown-option-key", `Unknown option "${key}" passed to ${callName}${hint}`, {
+          symbol: key,
+          ...(pkg ? { package: pkg } : {}),
+          ...(suggestion ? { suggestion } : {}),
+        });
+        continue;
+      }
+      const symbols: ts.Symbol[] = [];
+      for (const t of types) this.propertySymbols(this.checker.getNonNullableType(t), key, symbols);
+      const deprecated = symbols.flatMap((s) => s.getJsDocTags(this.checker)).find((t) => t.name === "deprecated");
+      if (deprecated) {
+        this.report(prop.name, "deprecated-api", this.deprecationMessage(`option "${key}" of ${callName}`, deprecated), {
+          symbol: key,
+          ...(pkg ? { package: pkg } : {}),
+        });
+      }
+      if (depth < 3 && ts.isPropertyAssignment(prop) && ts.isObjectLiteralExpression(prop.initializer)) {
+        const nested = symbols.map((s) => this.checker.getTypeOfSymbolAtLocation(s, lit));
+        if (nested.length > 0) this.checkObjectLiteral(prop.initializer, nested, `${callName} option "${key}"`, pkg, depth + 1);
+      }
+    }
+  }
+
+  private deprecationMessage(what: string, tag: ts.JSDocTagInfo): string {
+    const text = ts.displayPartsToString(tag.text).trim();
+    return text ? `${what} is deprecated: ${text}` : `${what} is deprecated`;
+  }
+
+  private calleeCall(node: ts.Identifier): ts.CallExpression | ts.NewExpression | undefined {
+    let n: ts.Node = node;
+    if (ts.isPropertyAccessExpression(n.parent) && n.parent.name === n) n = n.parent;
+    const p = n.parent;
+    if ((ts.isCallExpression(p) || ts.isNewExpression(p)) && p.expression === n) return p;
+    return undefined;
+  }
+
+  private checkDeprecated(node: ts.Identifier): void {
+    const parent = node.parent;
+    if (
+      ts.isImportSpecifier(parent) ||
+      ts.isImportClause(parent) ||
+      ts.isNamespaceImport(parent) ||
+      ts.isExportSpecifier(parent) ||
+      ts.isImportEqualsDeclaration(parent)
+    ) {
+      return;
+    }
+    const sym = this.checker.getSymbolAtLocation(node);
+    if (!sym) return;
+    let target = sym;
+    if (sym.flags & ts.SymbolFlags.Alias) {
+      try {
+        target = this.checker.getAliasedSymbol(sym);
+      } catch {
+        return;
+      }
+    }
+    const decls = target.declarations ?? [];
+    if (decls.length === 0 || !decls.every(isExternalDecl)) return;
+    const tags: ts.JSDocTagInfo[] = [];
+    const call = this.calleeCall(node);
+    const overloaded = decls.filter(isFunctionLike).length > 1;
+    if (call) {
+      const sig = this.checker.getResolvedSignature(call);
+      if (sig && isExternalDecl(sig.declaration)) tags.push(...sig.getJsDocTags());
+    }
+    if (!(call && overloaded)) tags.push(...target.getJsDocTags(this.checker));
+    const deprecated = tags.find((t) => t.name === "deprecated");
+    if (!deprecated) return;
+    const pkg = packageNameFromPath(decls[0]!.getSourceFile().fileName);
+    this.report(node, "deprecated-api", this.deprecationMessage(`"${node.text}"`, deprecated), {
+      symbol: node.text,
+      ...(pkg ? { package: pkg } : {}),
+    });
   }
 
   private checkNamespaceMember(node: ts.PropertyAccessExpression): void {
