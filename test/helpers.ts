@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -71,4 +72,18 @@ export function check(source: string, opts: { file?: string; config?: Partial<Co
 
 export function rules(findings: Finding[]): string[] {
   return findings.map((f) => f.rule);
+}
+
+export function git(root: string, ...args: string[]): string {
+  return execFileSync(
+    "git",
+    ["-c", "user.name=tester", "-c", "user.email=tester@example.com", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", ...args],
+    { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+  );
+}
+
+/** Initializes a repository whose hooks live in its own .git/hooks, ignoring any global core.hooksPath. */
+export function initRepo(root: string): void {
+  git(root, "init", "-q", "-b", "main");
+  git(root, "config", "core.hooksPath", ".git/hooks");
 }
