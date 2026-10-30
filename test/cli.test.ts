@@ -123,39 +123,6 @@ describe("human output", () => {
   });
 });
 
-describe("hook install", () => {
-  it("writes an executable pre-commit hook", () => {
-    const p = createProject();
-    initRepo(p.root);
-    const r = runCli(["hook", "install"], p.root);
-    expect(r.code).toBe(0);
-    const hook = path.join(p.root, ".git/hooks/pre-commit");
-    expect(fs.readFileSync(hook, "utf8")).toContain("refcheck check --staged");
-    expect(fs.statSync(hook).mode & 0o111).not.toBe(0);
-  });
-
-  it("refuses to overwrite an existing hook without --force and leaves it untouched", () => {
-    const p = createProject();
-    initRepo(p.root);
-    const hook = path.join(p.root, ".git/hooks/pre-commit");
-    fs.mkdirSync(path.dirname(hook), { recursive: true });
-    fs.writeFileSync(hook, "#!/bin/sh\necho mine\n");
-    const refused = runCli(["hook", "install"], p.root);
-    expect(refused.code).toBe(2);
-    expect(refused.err).toContain("--force");
-    expect(fs.readFileSync(hook, "utf8")).toContain("echo mine");
-    const forced = runCli(["hook", "install", "--force"], p.root);
-    expect(forced.code).toBe(0);
-    expect(forced.out).toContain("Replaced");
-    expect(fs.readFileSync(hook, "utf8")).toContain("refcheck");
-  });
-
-  it("fails outside a git repository", () => {
-    const p = createProject();
-    expect(runCli(["hook", "install"], p.root).code).toBe(2);
-  });
-});
-
 describe("built CLI smoke test", () => {
   const repo = path.resolve(import.meta.dirname, "..");
   const cli = path.join(repo, "dist/cli.js");

@@ -77,13 +77,12 @@ export function rules(findings: Finding[]): string[] {
 export function git(root: string, ...args: string[]): string {
   return execFileSync(
     "git",
-    ["-c", "user.name=tester", "-c", "user.email=tester@example.com", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", ...args],
+    ["-c", "user.name=tester", "-c", "user.email=tester@example.com", "-c", "commit.gpgsign=false", ...args],
     { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
   );
 }
 
-/** Initializes a repository whose hooks live in its own .git/hooks, ignoring any global core.hooksPath. */
+/** Initializes a repository in the temp tree. The sandbox environment keeps git away from real configs. */
 export function initRepo(root: string): void {
   git(root, "init", "-q", "-b", "main");
-  git(root, "config", "core.hooksPath", ".git/hooks");
 }

@@ -22,7 +22,8 @@ const HELP = `refcheck - verify code references against what is installed in the
 
 Usage:
   refcheck check [paths...] [options]   check files (default: files changed vs HEAD)
-  refcheck hook install [--force]       install a git pre-commit hook
+  refcheck hook install [--force] [--allow-external-hooks-path]
+                                        install a git pre-commit hook
   refcheck --help | --version
 
 check options:
@@ -114,10 +115,17 @@ function runCheck(args: string[], io: Io, cwd: string): number {
 function runHook(args: string[], io: Io, cwd: string): number {
   const [sub, ...rest] = args;
   if (sub !== "install") throw new UsageError(`unknown hook command: ${sub ?? "(none)"} (expected "install")`);
-  const { positionals, flags } = parseArgs(rest, ["root"], ["force"]);
+  const { positionals, flags } = parseArgs(rest, ["root"], ["force", "allow-external-hooks-path"]);
   if (positionals.length > 0) throw new UsageError(`unexpected argument: ${positionals[0]}`);
-  const result = installPreCommitHook(resolveRoot(flags, cwd), flags.has("force"));
+  const result = installPreCommitHook(resolveRoot(flags, cwd), {
+    force: flags.has("force"),
+    allowExternalHooksPath: flags.has("allow-external-hooks-path"),
+  });
   io.stdout(`${result.overwritten ? "Replaced" : "Installed"} pre-commit hook: ${result.path}\n`);
+  if (result.backup) io.stdout(`Previous hook saved as: ${result.backup}\n`);
+  if (result.external) {
+    io.stdout(`Note: this hooks directory is outside the repository${result.hooksPathScope ? ` (core.hooksPath from ${result.hooksPathScope} git config)` : ""} and may apply to other repositories.\n`);
+  }
   return 0;
 }
 
