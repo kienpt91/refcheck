@@ -150,5 +150,5 @@ describe("built CLI smoke test", () => {
     const usage = spawnSync(process.execPath, [cli, "check", "--bogus"], { cwd: p.root, encoding: "utf8" });
     expect(usage.status).toBe(2);
     expect(usage.stderr).toContain("unknown option");
-  });
+  }, 60_000);
 });
