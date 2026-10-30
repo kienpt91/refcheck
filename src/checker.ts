@@ -412,7 +412,7 @@ class FileChecker {
                 : `is not defined in the "exports" map`;
         const keyNames = outcome.keys.map((k) => (k === "." ? name : name + k.slice(1)));
         const suggestion = subpath === "." ? undefined : closest(full, keyNames);
-        this.report(specNode, "unresolved-subpath", `"${full}" ${why} of ${name}`, {
+        this.report(specNode, "unresolved-subpath", `"${full}" ${why} in package ${name}`, {
           package: name,
           ...(suggestion ? { suggestion } : {}),
         });
@@ -619,7 +619,7 @@ class FileChecker {
       if (!acc.keys.has(key)) {
         const suggestion = closest(key, acc.keys);
         const valid = [...acc.keys].sort();
-        const hint = suggestion ? `; did you mean "${suggestion}"?` : valid.length <= 12 ? ` (known keys: ${valid.join(", ")})` : "";
+        const hint = suggestion ? "" : valid.length <= 12 ? ` (known keys: ${valid.join(", ")})` : "";
         this.report(prop.name, "unknown-option-key", `Unknown option "${key}" passed to ${callName}${hint}`, {
           symbol: key,
           ...(pkg ? { package: pkg } : {}),
