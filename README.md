@@ -32,7 +32,7 @@ Requires Node 20 or newer. `refcheck` bundles its own `typescript` for analysis;
 
 ```
 refcheck check [paths...] [--all] [--staged] [--json] [--root <dir>] [--config <file>] [--no-color]
-refcheck hook install [--force] [--root <dir>]
+refcheck hook install [--force] [--allow-external-hooks-path] [--root <dir>]
 ```
 
 Which files are checked:
@@ -129,7 +129,11 @@ $ refcheck hook install
 Installed pre-commit hook: /path/to/repo/.git/hooks/pre-commit
 ```
 
-The hook is a two-line shell script (`exec npx --no-install refcheck check --staged`). `hook install` refuses to replace an existing `pre-commit` hook and exits with `2` unless you pass `--force`. It honors `core.hooksPath`. Note that it checks the files as they are in the working tree, not the staged blobs.
+The hook is a two-line shell script (`exec npx --no-install refcheck check --staged`). It checks the files as they are in the working tree, not the staged blobs. The install is deliberately conservative:
+
+- The resolved path is always printed.
+- An existing `pre-commit` entry, including a dangling symlink, is never overwritten without `--force`. With `--force` the old hook is moved to `pre-commit.bak` (a symlink is moved as a symlink, never written through). If `pre-commit.bak` already exists, the command refuses.
+- `core.hooksPath` is honored, but only when the hooks directory is inside the repository (or its git directory, after resolving symlinks). A directory outside it, such as a shared hooks directory set in your global git config, is refused with a message naming the path and the config scope; pass `--allow-external-hooks-path` to install there anyway. Such a directory may apply to other repositories, and the command says so.
 
 Copy-paste alternative, if you manage hooks yourself:
 
@@ -227,7 +231,7 @@ npm run build
 npm run bench
 ```
 
-The tests build fake `node_modules` trees in temp directories (`package.json` with `exports` plus `.d.ts` files); none installs real packages or touches the network. A smoke test spawns the built CLI against a temp project.
+The tests build fake `node_modules` trees in temp directories (`package.json` with `exports` plus `.d.ts` files); none installs real packages or touches the network. Every test file runs with a private `HOME`, a private empty global git config, `GIT_CONFIG_NOSYSTEM=1` and a `GIT_CEILING_DIRECTORIES` at the temp root, so the hook tests cannot reach your real git configuration or hooks. A smoke test spawns the built CLI against a temp project.
 
 ## License
 
