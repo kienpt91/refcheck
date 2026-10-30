@@ -38,10 +38,10 @@
     "bench": "npm run build && node bench/run.mjs"
   },
   "dependencies": {
-    "typescript": "^5.6.0"
+    "typescript": "5.9.3"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
-    "vitest": "^3.0.0"
+    "@types/node": "22.20.4",
+    "vitest": "3.2.7"
   }
 }
