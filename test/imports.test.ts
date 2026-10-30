@@ -157,3 +157,24 @@ describe("relative-import-missing", () => {
     expect(rules(f)).toEqual(["relative-import-missing", "relative-import-missing"]);
   });
 });
+
+describe("path containment", () => {
+  it("does not treat a subpath that climbs out of the package as existing", () => {
+    const project = createProject({ "src/a.ts": `import x from "csv-lite/../plain-js/index";\nconsole.log(x);\n` });
+    const f = run(project, ["src/a.ts"]).findings;
+    expect(f.map((x) => x.rule)).toEqual(["unresolved-subpath"]);
+  });
+
+  it("ignores exports targets that point outside the package", () => {
+    const project = createProject({ "src/a.ts": `import x from "esc-pkg/p/hosts";\nconsole.log(x);\n` }, { fixtures: false });
+    project.write("package.json", JSON.stringify({ name: "p", dependencies: { "esc-pkg": "1.0.0" } }));
+    project.install("esc-pkg", { exports: { "./p/*": "./../../../package.json" } });
+    expect(run(project, ["src/a.ts"]).findings.map((x) => x.rule)).toEqual(["unresolved-subpath"]);
+  });
+
+  it("does not follow workspace globs outside the root", () => {
+    const project = createProject({ "src/a.ts": `import { x } from "outside-ws";\nconsole.log(x);\n` }, { fixtures: false });
+    project.write("package.json", JSON.stringify({ name: "p", workspaces: ["../*"] }));
+    expect(run(project, ["src/a.ts"]).findings.map((x) => x.rule)).toEqual(["unknown-package"]);
+  });
+});

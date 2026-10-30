@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { MAX_GLOB_LENGTH } from "./glob.js";
 import { isRuleId, RULES } from "./rules.js";
 import { UsageError } from "./types.js";
 
@@ -24,6 +25,9 @@ function stringArray(value: unknown, key: string, file: string): string[] {
   if (value === undefined) return [];
   if (!Array.isArray(value) || value.some((v) => typeof v !== "string")) {
     throw new UsageError(`${file}: "${key}" must be an array of strings`);
+  }
+  if (key === "ignorePaths" && (value as string[]).some((v) => v.length > MAX_GLOB_LENGTH)) {
+    throw new UsageError(`${file}: "ignorePaths" patterns must be at most ${MAX_GLOB_LENGTH} characters`);
   }
   return value as string[];
 }
@@ -75,6 +79,7 @@ export function loadConfig(root: string, explicit?: string): Config {
   }
   let raw: unknown;
   try {
+    if (fs.statSync(file).size > 1024 * 1024) throw new Error("file is larger than 1 MiB");
     raw = JSON.parse(fs.readFileSync(file, "utf8"));
   } catch (err) {
     throw new UsageError(`${path.basename(file)}: invalid JSON (${(err as Error).message})`);

@@ -14,12 +14,21 @@ export interface PackageJson {
   workspaces?: string[] | { packages?: string[] };
 }
 
+export const MAX_JSON_BYTES = 5 * 1024 * 1024;
+
+/** True when `target` is `dir` itself or lies below it, lexically. */
+export function isWithin(dir: string, target: string): boolean {
+  const rel = path.relative(dir, target);
+  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+}
+
 const jsonCache = new Map<string, PackageJson | null>();
 
 export function readPackageJson(file: string): PackageJson | undefined {
   let cached = jsonCache.get(file);
   if (cached === undefined) {
     try {
+      if (fs.statSync(file).size > MAX_JSON_BYTES) throw new Error("package.json too large");
       cached = JSON.parse(fs.readFileSync(file, "utf8")) as PackageJson;
     } catch {
       cached = null;
@@ -113,9 +122,13 @@ function globDirs(root: string, pattern: string): string[] {
   const clean = pattern.replace(/^\.\//, "").replace(/\/$/, "");
   if (clean.endsWith("/**")) return globDirs(root, clean.slice(0, -3) + "/*");
   const star = clean.indexOf("*");
-  if (star < 0) return [path.join(root, clean)];
+  if (star < 0) {
+    const dir = path.join(root, clean);
+    return isWithin(root, dir) ? [dir] : [];
+  }
   if (clean.slice(star) !== "*" || !clean.slice(0, star).endsWith("/")) return [];
   const base = path.join(root, clean.slice(0, star));
+  if (!isWithin(root, base)) return [];
   try {
     return fs
       .readdirSync(base, { withFileTypes: true })
@@ -183,6 +196,7 @@ const INDEX = ["index.js", "index.json", "index.mjs", "index.cjs", "index.ts", "
 /** File-layout check for packages without an `exports` map. */
 export function subpathExistsOnDisk(pkgDir: string, subpath: string): boolean {
   const base = path.join(pkgDir, subpath);
+  if (!isWithin(pkgDir, base)) return false;
   for (const ext of LAYOUT_EXT) {
     try {
       if (fs.statSync(base + ext).isFile()) return true;

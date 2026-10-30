@@ -52,3 +52,17 @@ describe("config parsing", () => {
     expect(() => parseConfig([])).toThrow(UsageError);
   });
 });
+
+describe("hardening", () => {
+  it("collapses star runs so hostile patterns stay fast", () => {
+    const re = globToRegExp("**/**/**/**/**/**/x");
+    const start = Date.now();
+    expect(re.test("a/".repeat(5000) + "y")).toBe(false);
+    expect(Date.now() - start).toBeLessThan(1000);
+    expect(globToRegExp("a**b").test("axxb")).toBe(true);
+  });
+
+  it("rejects very long ignorePaths patterns", () => {
+    expect(() => parseConfig({ ignorePaths: ["*".repeat(300)] })).toThrow(/at most/);
+  });
+});

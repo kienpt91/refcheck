@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { isWithin } from "./packages.js";
 
 /** How the importing syntax selects conditions. `types` accepts both `import` and `require`. */
 export type ImportKind = "import" | "require" | "types";
@@ -33,6 +34,7 @@ const TYPE_VARIANTS: Record<string, string[]> = {
 
 function targetExists(pkgDir: string, target: string): boolean {
   const abs = path.resolve(pkgDir, target);
+  if (!isWithin(pkgDir, abs)) return false;
   if (fs.existsSync(abs)) return true;
   const ext = path.extname(abs);
   const stem = abs.slice(0, abs.length - ext.length);
@@ -40,7 +42,10 @@ function targetExists(pkgDir: string, target: string): boolean {
   return fs.existsSync(abs + ".d.ts");
 }
 
-function walk(target: unknown, kind: ImportKind, match: string | undefined, pkgDir: string): Walk {
+const MAX_DEPTH = 32;
+
+function walk(target: unknown, kind: ImportKind, match: string | undefined, pkgDir: string, depth = 0): Walk {
+  if (depth > MAX_DEPTH) return "no-condition";
   if (typeof target === "string") {
     if (match === undefined) return "ok";
     return targetExists(pkgDir, target.replaceAll("*", match)) ? "ok" : "file-missing";
@@ -49,7 +54,7 @@ function walk(target: unknown, kind: ImportKind, match: string | undefined, pkgD
   if (Array.isArray(target)) {
     let last: Walk = "no-condition";
     for (const item of target) {
-      const r = walk(item, kind, match, pkgDir);
+      const r = walk(item, kind, match, pkgDir, depth + 1);
       if (r === "ok") return "ok";
       last = r;
     }
@@ -60,7 +65,7 @@ function walk(target: unknown, kind: ImportKind, match: string | undefined, pkgD
     for (const [condition, value] of Object.entries(target as Record<string, unknown>)) {
       if (condition === "import" && kind === "require") continue;
       if (condition === "require" && kind === "import") continue;
-      const r = walk(value, kind, match, pkgDir);
+      const r = walk(value, kind, match, pkgDir, depth + 1);
       if (r === "ok") return "ok";
       if (r === "blocked") return "blocked";
       if (r === "file-missing") result = "file-missing";
