@@ -233,6 +233,19 @@ npm run bench
 
 The tests build fake `node_modules` trees in temp directories (`package.json` with `exports` plus `.d.ts` files); none installs real packages or touches the network. Every test file runs with a private `HOME`, a private empty global git config, `GIT_CONFIG_NOSYSTEM=1` and a `GIT_CEILING_DIRECTORIES` at the temp root, so the hook tests cannot reach your real git configuration or hooks. A smoke test spawns the built CLI against a temp project.
 
+## Secrets and hooks
+
+Never commit `.env` files or credentials. Keep real values in a local, git-ignored `.env` and commit only a `.env.example` with placeholders.
+
+Install [lefthook](https://github.com/evilmartians/lefthook) and run `lefthook install` once per clone. This enables two hooks (see `lefthook.yml`):
+
+- `pre-commit` runs `sh scripts/secret-scan.sh --staged` and blocks a commit that stages a secret-like file or key.
+- `pre-push` runs `sh scripts/secret-scan.sh --tree` and blocks a push if any tracked file contains one.
+
+CI runs the same scanner over the working tree and the full git history. The scanner is a dependency-free shell script. A finding that is a reviewed, harmless fixture can be allowed by adding a line `<path> <rule>   # reason` to `.secret-scan-allow` (one entry per path and rule, no wildcards), or by putting the marker `secret-scan: allow` on the offending line.
+
+If a secret is ever committed, treat it as compromised: rotate or revoke it first, then remove it from git history and force-push.
+
 ## License
 
 MIT
